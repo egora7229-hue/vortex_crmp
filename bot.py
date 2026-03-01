@@ -265,20 +265,24 @@ def get_application_action_keyboard(app_id):
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ============== АДМИН-ПАНЕЛЬ ==============
+# ============== ИСПРАВЛЕННАЯ АДМИН-ПАНЕЛЬ ==============
 def get_admin_keyboard(user_level):
     """Создает клавиатуру админ-панели в зависимости от уровня"""
-    buttons = [
-        [InlineKeyboardButton(text="👥 Список админов", callback_data="admin_list")],
-        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton(text="📝 Заявки в админы", callback_data="admin_applications")],
-    ]
+    buttons = []
+    
+    # Кнопки, доступные всем админам
+    buttons.append([InlineKeyboardButton(text="👥 Список админов", callback_data="admin_list")])
+    buttons.append([InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")])
+    
+    # Кнопка заявок доступна админам с уровнем 10+
+    if user_level >= 10:
+        buttons.append([InlineKeyboardButton(text="📝 Заявки в админы", callback_data="admin_applications")])
     
     # Управление админами доступно с 10+ уровня
     if user_level >= 10:
         buttons.append([InlineKeyboardButton(text="➕ Добавить админа", callback_data="admin_add")])
-        buttons.append([InlineKeyboardButton(text="📝 Управление админами", callback_data="admin_manage")])
     
+    # Кнопка назад для всех
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
     
     return InlineKeyboardMarkup(inline_keyboard=buttons)
