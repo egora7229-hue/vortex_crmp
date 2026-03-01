@@ -10,11 +10,30 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from datetime import datetime, timedelta
 import random
+import pytz
 
 # ==================== ТВОИ ДАННЫЕ ====================
 BOT_TOKEN = "8640012758:AAFhVeVAleSvtg36-dFbaYxUY5Zl8o-9_ck"
 OWNER_ID = 7470989833
 OWNER_LEVEL = 1000
+
+# ==================== НАСТРОЙКА ЧАСОВОГО ПОЯСА ====================
+MSK_TZ = pytz.timezone('Europe/Moscow')
+
+def get_msk_time():
+    """Возвращает текущее время в МСК"""
+    return datetime.now(MSK_TZ)
+
+def get_msk_date():
+    """Возвращает текущую дату в МСК"""
+    return get_msk_time().strftime("%Y-%m-%d")
+
+def get_msk_weekday():
+    """Возвращает номер дня недели в МСК (1-7, где 1 - понедельник)"""
+    # В Python понедельник = 0, воскресенье = 6
+    # Нам нужно: понедельник = 1, воскресенье = 7
+    weekday = get_msk_time().weekday() + 1
+    return weekday
 
 # ==================== ФУНКЦИЯ УДАЛЕНИЯ ВЕБХУКА ====================
 async def delete_webhook():
@@ -36,7 +55,6 @@ dp = Dispatcher(storage=storage)
 # Файлы для хранения данных
 ADMINS_FILE = "admin.json"
 APPLICATIONS_FILE = "applications.json"
-INVENTORY_FILE = "inventory.json"
 DAILY_BONUS_FILE = "daily_bonus.json"
 
 # ============== ЗАГРУЗКА/СОХРАНЕНИЕ ДАННЫХ ==============
@@ -59,7 +77,7 @@ def load_admins():
                 "name": "Главный администратор", 
                 "level": OWNER_LEVEL, 
                 "added_by": "system",
-                "date": datetime.now().strftime("%Y-%m-%d %H:%M")
+                "date": get_msk_time().strftime("%Y-%m-%d %H:%M")
             }}
     
     print("Файл admin.json не найден, создаю новый...")
@@ -67,7 +85,7 @@ def load_admins():
         "name": "Главный администратор", 
         "level": OWNER_LEVEL, 
         "added_by": "system",
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M")
+        "date": get_msk_time().strftime("%Y-%m-%d %H:%M")
     }}
     
     save_admins(default_admins)
@@ -100,21 +118,6 @@ def save_applications(applications):
     with open(APPLICATIONS_FILE, 'w', encoding='utf-8') as f:
         json.dump(applications, f, indent=4, ensure_ascii=False)
 
-def load_inventory():
-    """Загружает инвентарь пользователей"""
-    if os.path.exists(INVENTORY_FILE):
-        try:
-            with open(INVENTORY_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
-
-def save_inventory(inventory):
-    """Сохраняет инвентарь пользователей"""
-    with open(INVENTORY_FILE, 'w', encoding='utf-8') as f:
-        json.dump(inventory, f, indent=4, ensure_ascii=False)
-
 def load_daily_bonus():
     """Загружает данные о ежедневных бонусах"""
     if os.path.exists(DAILY_BONUS_FILE):
@@ -133,16 +136,11 @@ def save_daily_bonus(data):
 # Загружаем данные
 ADMINS = load_admins()
 APPLICATIONS = load_applications()
-INVENTORY = load_inventory()
 DAILY_BONUS_DATA = load_daily_bonus()
 
 print(f"✅ Загружено администраторов: {len(ADMINS)}")
 for admin_id, admin_data in ADMINS.items():
     print(f"   - {admin_data['name']} (ID: {admin_id}, уровень: {admin_data['level']})")
-
-# Хранилище для связи пользователей и их обращений
-user_appeals = {}
-appeal_counter = 0
 
 # ============== ПРОВЕРКА ПРАВ ==============
 def get_admin_level(user_id):
@@ -180,45 +178,173 @@ def get_level_text(level):
         return f"👨‍💼 **Администратор** (Уровень {level}) - базовый доступ"
 
 # ============== СОСТОЯНИЯ ДЛЯ ФОРМ ==============
-class SupportForm(StatesGroup):
-    waiting_for_issue = State()
-    waiting_for_contact = State()
-
-class ApplyForm(StatesGroup):
-    waiting_for_nickname = State()
-    waiting_for_details = State()
-    waiting_for_contact = State()
-
 class AdminApplyForm(StatesGroup):
     waiting_for_age = State()
     waiting_for_experience = State()
     waiting_for_reason = State()
-
-class AdminReplyForm(StatesGroup):
-    waiting_for_reply = State()
 
 class AddAdminForm(StatesGroup):
     waiting_for_id = State()
     waiting_for_name = State()
     waiting_for_level = State()
 
-class ChangeAdminLevelForm(StatesGroup):
-    waiting_for_level = State()
-
 class AdminApplicationForm(StatesGroup):
     waiting_for_accept_text = State()
 
+# ============== НАЗВАНИЯ ДНЕЙ НЕДЕЛИ ==============
+WEEKDAYS = {
+    1: "Понедельник",
+    2: "Вторник",
+    3: "Среда",
+    4: "Четверг",
+    5: "Пятница",
+    6: "Суббота",
+    7: "Воскресенье"
+}
+
+# ============== ФУНКЦИИ ДЛЯ ЕЖЕДНЕВНЫХ НАГРАД ==============
+def get_user_daily_data(user_id):
+    """Получает данные о ежедневных наградах пользователя"""
+    user_id_str = str(user_id)
+    if user_id_str not in DAILY_BONUS_DATA:
+        DAILY_BONUS_DATA[user_id_str] = {
+            "last_claim_date": None,
+            "claimed_days": [],  # список дней, за которые уже получена награда
+            "streak": 0,
+            "total_claimed": 0
+        }
+    return DAILY_BONUS_DATA[user_id_str]
+
+def get_daily_reward_status(user_id):
+    """Возвращает статус ежедневных наград для пользователя"""
+    user_data = get_user_daily_data(user_id)
+    today = get_msk_date()
+    today_weekday = get_msk_weekday()
+    
+    # Проверяем, получал ли сегодня
+    claimed_today = (user_data.get("last_claim_date") == today)
+    
+    # Создаем список дней с 1 по 7
+    days_status = {}
+    for day in range(1, 8):
+        if day in user_data.get("claimed_days", []):
+            days_status[day] = "✅ Получено"
+        else:
+            days_status[day] = "❌ Не получено"
+    
+    return {
+        "claimed_today": claimed_today,
+        "today_weekday": today_weekday,
+        "days_status": days_status,
+        "streak": user_data.get("streak", 0),
+        "total_claimed": user_data.get("total_claimed", 0)
+    }
+
+def claim_daily_reward(user_id):
+    """Получает ежедневную награду"""
+    user_id_str = str(user_id)
+    today = get_msk_date()
+    today_weekday = get_msk_weekday()
+    
+    # Получаем данные пользователя
+    if user_id_str not in DAILY_BONUS_DATA:
+        DAILY_BONUS_DATA[user_id_str] = {
+            "last_claim_date": None,
+            "claimed_days": [],
+            "streak": 0,
+            "total_claimed": 0
+        }
+    
+    user_data = DAILY_BONUS_DATA[user_id_str]
+    
+    # Проверяем, не получал ли уже сегодня
+    if user_data.get("last_claim_date") == today:
+        return {"success": False, "message": "Вы уже получили награду сегодня!"}
+    
+    # Награды за каждый день
+    daily_rewards = {
+        1: "🎫 1 билет на розыгрыш",
+        2: "💎 50 кристаллов",
+        3: "💰 5000 монет",
+        4: "🌟 Опыт x2 (3 часа)",
+        5: "🎁 Сундук с предметами",
+        6: "🔑 Ключ от сундука",
+        7: "👑 VIP на 1 день (ГЛАВНЫЙ ПРИЗ)"
+    }
+    
+    reward = daily_rewards.get(today_weekday, "🎁 Случайный бонус")
+    
+    # Обновляем данные
+    user_data["last_claim_date"] = today
+    if today_weekday not in user_data.get("claimed_days", []):
+        if "claimed_days" not in user_data:
+            user_data["claimed_days"] = []
+        user_data["claimed_days"].append(today_weekday)
+    
+    user_data["total_claimed"] = user_data.get("total_claimed", 0) + 1
+    
+    # Обновляем streak (серию)
+    yesterday = (datetime.now(MSK_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+    if user_data.get("last_claim_date") == yesterday:
+        user_data["streak"] = user_data.get("streak", 0) + 1
+    else:
+        user_data["streak"] = 1
+    
+    save_daily_bonus(DAILY_BONUS_DATA)
+    
+    return {
+        "success": True,
+        "reward": reward,
+        "day": today_weekday,
+        "day_name": WEEKDAYS[today_weekday],
+        "streak": user_data["streak"]
+    }
+
+def format_daily_rewards_text(user_id):
+    """Форматирует текст ежедневных наград как на картинке"""
+    status = get_daily_reward_status(user_id)
+    
+    # Проверяем, получен ли главный приз (день 7)
+    main_prize_status = status['days_status'].get(7, "❌ Не получено")
+    
+    text = "🏆 **Ежедневные подарки**\n"
+    text += "Заходи каждый день и забирай новую награду\n\n"
+    
+    # Первая строка дней (1-7 с статусами)
+    for day in range(1, 8):
+        day_name = WEEKDAYS[day]
+        day_status = status['days_status'].get(day, "❌ Не получено")
+        text += f"{day}. {day_name} - {day_status}\n"
+    
+    text += "\n"
+    
+    # Вторая строка только названия дней
+    for day in range(1, 8):
+        day_name = WEEKDAYS[day][:3]  # Сокращаем до 3 букв
+        text += f"{day}. {day_name}  "
+    
+    text += "\n\n"
+    
+    # Главный приз
+    text += f"ГЛАВНЫЙ ПРИЗ - {main_prize_status}\n\n"
+    
+    # Информация о текущем дне
+    today = get_msk_weekday()
+    text += f"📅 Сегодня: {WEEKDAYS[today]}"
+    if status['claimed_today']:
+        text += " (уже получено)"
+    
+    return text
+
 # ============== ГЛАВНОЕ МЕНЮ ==============
 def get_main_keyboard(user_id=None):
-    """Создает главную клавиатуру без правил"""
+    """Создает главную клавиатуру"""
     buttons = [
         [InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
         [InlineKeyboardButton(text="▶️ Начать играть", callback_data="start_play")],
         [InlineKeyboardButton(text="👥 Реферальная система", callback_data="referral")],
         [InlineKeyboardButton(text="🎁 Получение бонусов", callback_data="bonuses")],
-        [InlineKeyboardButton(text="📋 Ежедневные задания", callback_data="daily_tasks")],
         [InlineKeyboardButton(text="🏆 Ежедневные награды", callback_data="daily_rewards")],
-        [InlineKeyboardButton(text="📦 Хранилище предметов", callback_data="inventory")],
         [InlineKeyboardButton(text="📝 Подать заявку на админа", callback_data="apply_admin")],
     ]
     
@@ -266,7 +392,6 @@ def get_admin_keyboard(user_level):
     
     # Кнопки, доступные всем админам
     buttons.append([InlineKeyboardButton(text="👥 Список админов", callback_data="admin_list")])
-    buttons.append([InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")])
     
     # Кнопка заявок доступна админам с уровнем 10+
     if user_level >= 10:
@@ -280,78 +405,6 @@ def get_admin_keyboard(user_level):
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
     
     return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-# ============== ФУНКЦИИ ДЛЯ БОНУСОВ ==============
-def get_user_inventory(user_id):
-    """Получает инвентарь пользователя"""
-    user_id_str = str(user_id)
-    if user_id_str not in INVENTORY:
-        INVENTORY[user_id_str] = {
-            "items": [],
-            "last_daily": None,
-            "daily_streak": 0,
-            "points": 0
-        }
-    return INVENTORY[user_id_str]
-
-def add_item_to_inventory(user_id, item):
-    """Добавляет предмет в инвентарь"""
-    user_id_str = str(user_id)
-    if user_id_str not in INVENTORY:
-        INVENTORY[user_id_str] = {"items": [], "last_daily": None, "daily_streak": 0, "points": 0}
-    INVENTORY[user_id_str]["items"].append({
-        "name": item,
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "used": False
-    })
-    save_inventory(INVENTORY)
-
-def get_daily_reward(user_id):
-    """Получает ежедневную награду"""
-    user_id_str = str(user_id)
-    today = datetime.now().strftime("%Y-%m-%d")
-    
-    if user_id_str not in DAILY_BONUS_DATA:
-        DAILY_BONUS_DATA[user_id_str] = {
-            "last_claim": None,
-            "streak": 0,
-            "total_claimed": 0
-        }
-    
-    user_data = DAILY_BONUS_DATA[user_id_str]
-    last_claim = user_data.get("last_claim")
-    
-    if last_claim == today:
-        return {"success": False, "message": "Вы уже получили награду сегодня!"}
-    
-    if last_claim and (datetime.now() - datetime.strptime(last_claim, "%Y-%m-%d")).days == 1:
-        user_data["streak"] += 1
-    else:
-        user_data["streak"] = 1
-    
-    user_data["last_claim"] = today
-    user_data["total_claimed"] += 1
-    
-    rewards = [
-        "🎫 Билет на розыгрыш",
-        "💎 50 кристаллов",
-        "💰 1000 монет",
-        "🌟 Опыт x2 (1 час)",
-        "🎁 Сундук с предметами",
-        "🔑 Ключ от сундука"
-    ]
-    
-    reward = random.choice(rewards)
-    add_item_to_inventory(user_id, reward)
-    
-    save_daily_bonus(DAILY_BONUS_DATA)
-    
-    return {
-        "success": True,
-        "reward": reward,
-        "streak": user_data["streak"],
-        "total": user_data["total_claimed"]
-    }
 
 # ============== ОБРАБОТЧИК КОМАНДЫ /START ==============
 @dp.message(Command("start"))
@@ -379,7 +432,7 @@ async def cmd_start(message: types.Message):
 async def show_stats(callback: CallbackQuery):
     """Показывает статистику"""
     user_id = callback.from_user.id
-    user_inv = get_user_inventory(user_id)
+    daily_data = get_user_daily_data(user_id)
     
     stats_text = f"""
 📊 **Ваша статистика:**
@@ -387,9 +440,9 @@ async def show_stats(callback: CallbackQuery):
 👤 Профиль: {callback.from_user.full_name}
 🆔 ID: {user_id}
 
-📦 Предметов в хранилище: {len(user_inv['items'])}
-⭐ Бонусные очки: {user_inv['points']}
-📅 Дней в проекте: {user_inv['daily_streak']}
+🏆 Дней с наградами: {daily_data.get('total_claimed', 0)}
+🔥 Текущая серия: {daily_data.get('streak', 0)} дней
+📅 Всего наград: {daily_data.get('total_claimed', 0)}
 
 🔰 Рефералов: 0
     """
@@ -403,10 +456,10 @@ async def show_stats(callback: CallbackQuery):
     )
     await callback.answer()
 
-# ============== ИСПРАВЛЕННЫЙ ОБРАБОТЧИК "НАЧАТЬ ИГРАТЬ" (БЕЗ IP) ==============
+# ============== ОБРАБОТЧИК "НАЧАТЬ ИГРАТЬ" ==============
 @dp.callback_query(F.data == "start_play")
 async def start_play(callback: CallbackQuery):
-    """Начать играть - без IP, только кнопка"""
+    """Начать играть"""
     await callback.message.edit_text(
         "▶️ **Начать играть**\n\n"
         "Присоединяйся к нам!",
@@ -459,110 +512,18 @@ async def show_bonuses(callback: CallbackQuery):
 
 Доступные бонусы:
 
-✅ **Ежедневный бонус** - заходи каждый день
+✅ **Ежедневные награды** - заходи каждый день
 ✅ **Реферальный бонус** - приглашай друзей
-✅ **Игровой бонус** - играй на сервере
-✅ **Код дня** - активируй ежедневный код
+✅ **Промокоды** - активируй коды
 
-👉 Используй /bonus для получения
+👉 Используй кнопку "Ежедневные награды" в меню
     """
     
     await callback.message.edit_text(
         bonus_text,
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]]
-        ),
-        parse_mode="Markdown"
-    )
-    await callback.answer()
-
-@dp.callback_query(F.data == "daily_tasks")
-async def show_daily_tasks(callback: CallbackQuery):
-    """Ежедневные задания"""
-    tasks_text = """
-📋 **Ежедневные задания**
-
-🎯 **Задание 1:** Провести 1 час на сервере
-   Награда: 🎫 1 билет
-
-🎯 **Задание 2:** Заработать 10.000$ 
-   Награда: 💰 5000$
-
-🎯 **Задание 3:** Выполнить 5 миссий
-   Награда: ⭐ 50 опыта
-
-🎯 **Задание 4:** Пригласить друга
-   Награда: 🎁 Сундук
-
-⏳ До обновления: 12:34:56
-    """
-    
-    await callback.message.edit_text(
-        tasks_text,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]]
-        ),
-        parse_mode="Markdown"
-    )
-    await callback.answer()
-
-@dp.callback_query(F.data == "daily_rewards")
-async def show_daily_rewards(callback: CallbackQuery):
-    """Ежедневные награды"""
-    user_id = callback.from_user.id
-    reward_result = get_daily_reward(user_id)
-    
-    if reward_result["success"]:
-        text = f"""
-🏆 **Ежедневная награда получена!**
-
-🎁 Ты получил: **{reward_result['reward']}**
-
-🔥 Текущая серия: {reward_result['streak']} дней
-📦 Предмет добавлен в хранилище
-
-Заходи завтра для следующей награды!
-        """
-    else:
-        text = f"""
-🏆 **Ежедневные награды**
-
-{reward_result['message']}
-
-🔥 Твоя серия: {DAILY_BONUS_DATA.get(str(user_id), {}).get('streak', 0)} дней
-📦 Всего получено: {DAILY_BONUS_DATA.get(str(user_id), {}).get('total_claimed', 0)} наград
-
-Заходи каждый день и получай бонусы!
-        """
-    
-    await callback.message.edit_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]]
-        ),
-        parse_mode="Markdown"
-    )
-    await callback.answer()
-
-@dp.callback_query(F.data == "inventory")
-async def show_inventory(callback: CallbackQuery):
-    """Хранилище предметов"""
-    user_id = callback.from_user.id
-    user_inv = get_user_inventory(user_id)
-    
-    if not user_inv['items']:
-        items_text = "📦 В хранилище пока пусто\n\nПолучай предметы из ежедневных наград!"
-    else:
-        items_text = "📦 **Твои предметы:**\n\n"
-        for i, item in enumerate(user_inv['items'], 1):
-            status = "✅" if not item['used'] else "❌"
-            items_text += f"{status} {i}. {item['name']} - {item['date']}\n"
-    
-    await callback.message.edit_text(
-        items_text,
-        reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="🎁 Получить награду", callback_data="daily_rewards")],
+                [InlineKeyboardButton(text="🏆 Ежедневные награды", callback_data="daily_rewards")],
                 [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
             ]
         ),
@@ -570,7 +531,94 @@ async def show_inventory(callback: CallbackQuery):
     )
     await callback.answer()
 
-# ============== ОБРАБОТЧИК ЗАЯВОК НА АДМИНА ==============
+# ============== ЕЖЕДНЕВНЫЕ НАГРАДЫ (ОСНОВНОЙ ЭКРАН) ==============
+@dp.callback_query(F.data == "daily_rewards")
+async def show_daily_rewards(callback: CallbackQuery):
+    """Показывает ежедневные награды как на картинке"""
+    user_id = callback.from_user.id
+    status = get_daily_reward_status(user_id)
+    today_weekday = get_msk_weekday()
+    
+    # Форматируем текст как на картинке
+    text = "🏆 **Ежедневные подарки**\n"
+    text += "Заходи каждый день и забирай новую награду\n\n"
+    
+    # Первая строка дней с статусами
+    days_order = [1, 2, 3, 4, 5, 6, 7]
+    for day in days_order:
+        day_name = WEEKDAYS[day]
+        day_status = status['days_status'].get(day, "❌ Не получено")
+        text += f"{day}. {day_name} - {day_status}\n"
+    
+    text += "\n"
+    
+    # Вторая строка сокращенные названия
+    short_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    for i, day in enumerate(days_order, 1):
+        text += f"{day}. {short_names[i-1]}  "
+    
+    text += "\n\n"
+    
+    # Главный приз
+    main_prize_status = status['days_status'].get(7, "❌ Не получено")
+    text += f"ГЛАВНЫЙ ПРИЗ - {main_prize_status}\n\n"
+    
+    # Текущий день
+    text += f"📅 Сегодня: {WEEKDAYS[today_weekday]}"
+    if status['claimed_today']:
+        text += " (уже получено)"
+    
+    # Кнопки
+    buttons = []
+    if not status['claimed_today']:
+        buttons.append([InlineKeyboardButton(text="🎁 Забрать награду", callback_data="claim_daily")])
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+# ============== ПОЛУЧЕНИЕ НАГРАДЫ ==============
+@dp.callback_query(F.data == "claim_daily")
+async def claim_daily(callback: CallbackQuery):
+    """Обрабатывает получение ежедневной награды"""
+    user_id = callback.from_user.id
+    result = claim_daily_reward(user_id)
+    
+    if result["success"]:
+        text = f"""
+✅ **Награда получена!**
+
+🎁 Ты получил: **{result['reward']}**
+📅 День: {result['day']}. {result['day_name']}
+🔥 Текущая серия: {result['streak']} дней
+
+Заходи завтра за новой наградой!
+        """
+    else:
+        text = f"""
+❌ **{result['message']}**
+
+Сегодня: {WEEKDAYS[get_msk_weekday()]}
+Заходи завтра!
+        """
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🏆 К наградам", callback_data="daily_rewards")],
+                [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
+            ]
+        ),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+# ============== ЗАЯВКИ НА АДМИНА ==============
 @dp.callback_query(F.data == "apply_admin")
 async def apply_admin_start(callback: CallbackQuery, state: FSMContext):
     """Начать заявку на админа"""
@@ -638,7 +686,7 @@ async def process_admin_apply_reason(message: types.Message, state: FSMContext):
         "experience": data.get('experience'),
         "reason": message.text,
         "status": "pending",
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M")
+        "date": get_msk_time().strftime("%Y-%m-%d %H:%M")
     }
     save_applications(APPLICATIONS)
     
@@ -785,7 +833,7 @@ async def view_applicant_profile(callback: CallbackQuery):
         return
     
     user_id = app['user_id']
-    user_inv = get_user_inventory(user_id)
+    daily_data = get_user_daily_data(user_id)
     
     text = f"""
 👤 **Профиль пользователя**
@@ -794,9 +842,8 @@ async def view_applicant_profile(callback: CallbackQuery):
 🆔 ID: {user_id}
 📱 Username: @{app['username'] if app['username'] else 'нет'}
 
-📦 Предметов: {len(user_inv['items'])}
-🔥 Дней в проекте: {user_inv['daily_streak']}
-📅 Всего наград: {DAILY_BONUS_DATA.get(str(user_id), {}).get('total_claimed', 0)}
+🏆 Всего наград: {daily_data.get('total_claimed', 0)}
+🔥 Серия: {daily_data.get('streak', 0)} дней
     """
     
     await callback.message.edit_text(
@@ -858,7 +905,7 @@ async def process_accept_application(message: types.Message, state: FSMContext):
     accept_text = message.text
     app['status'] = 'accepted'
     app['processed_by'] = message.from_user.full_name
-    app['processed_date'] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    app['processed_date'] = get_msk_time().strftime("%Y-%m-%d %H:%M")
     save_applications(APPLICATIONS)
     
     try:
@@ -894,7 +941,7 @@ async def reject_application(callback: CallbackQuery):
     
     app['status'] = 'rejected'
     app['processed_by'] = callback.from_user.full_name
-    app['processed_date'] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    app['processed_date'] = get_msk_time().strftime("%Y-%m-%d %H:%M")
     save_applications(APPLICATIONS)
     
     try:
@@ -915,7 +962,7 @@ async def reject_application(callback: CallbackQuery):
     )
     await callback.answer()
 
-# ============== ОСТАЛЬНЫЕ ОБРАБОТЧИКИ ==============
+# ============== ОБРАБОТЧИКИ АДМИН-ПАНЕЛИ ==============
 @dp.callback_query(F.data == "back_to_main")
 async def back_to_main(callback: CallbackQuery, state: FSMContext):
     """Возврат в главное меню"""
@@ -945,7 +992,6 @@ async def admin_panel(callback: CallbackQuery):
     )
     await callback.answer()
 
-# ============== ОБРАБОТЧИК КОМАНДЫ /ADMIN ==============
 @dp.message(Command("admin"))
 async def cmd_admin(message: types.Message):
     """Команда для управления админами"""
@@ -962,6 +1008,40 @@ async def cmd_admin(message: types.Message):
         reply_markup=get_admin_keyboard(user_level),
         parse_mode="Markdown"
     )
+
+# ============== ОБРАБОТЧИК СПИСКА АДМИНОВ ==============
+@dp.callback_query(F.data == "admin_list")
+async def show_admin_list(callback: CallbackQuery):
+    """Показывает список админов"""
+    user_level = get_admin_level(callback.from_user.id)
+    
+    if user_level == 0:
+        await callback.answer("❌ У вас нет доступа!", show_alert=True)
+        return
+    
+    admin_list = "👥 **Список администраторов:**\n\n"
+    for admin_id, admin_data in sorted(ADMINS.items(), key=lambda x: int(x[1].get('level', 0)), reverse=True):
+        level = admin_data.get('level', 0)
+        try:
+            level = int(level)
+        except:
+            level = 0
+            
+        if level == OWNER_LEVEL:
+            admin_list += f"👑 **{admin_data['name']}** (Владелец, ур. {level}) - `{admin_id}`\n"
+        elif level >= 10:
+            admin_list += f"🔰 **{admin_data['name']}** (Ст. админ, ур. {level}) - `{admin_id}`\n"
+        else:
+            admin_list += f"• {admin_data['name']} (ур. {level}) - `{admin_id}`\n"
+    
+    await callback.message.edit_text(
+        admin_list,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]]
+        ),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
 
 # ============== ОБРАБОТЧИК ДОБАВЛЕНИЯ АДМИНА ==============
 @dp.callback_query(F.data == "admin_add")
@@ -1087,7 +1167,7 @@ async def process_add_admin_level(message: types.Message, state: FSMContext):
             "name": admin_name,
             "level": new_level,
             "added_by": message.from_user.full_name,
-            "date": datetime.now().strftime("%Y-%m-%d %H:%M")
+            "date": get_msk_time().strftime("%Y-%m-%d %H:%M")
         }
         
         save_admins(ADMINS)
@@ -1125,85 +1205,6 @@ async def process_add_admin_level(message: types.Message, state: FSMContext):
                 inline_keyboard=[[InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_panel")]]
             )
         )
-
-# ============== ОБРАБОТЧИК СПИСКА АДМИНОВ ==============
-@dp.callback_query(F.data == "admin_list")
-async def show_admin_list(callback: CallbackQuery):
-    """Показывает список админов"""
-    user_level = get_admin_level(callback.from_user.id)
-    
-    if user_level == 0:
-        await callback.answer("❌ У вас нет доступа!", show_alert=True)
-        return
-    
-    admin_list = "👥 **Список администраторов:**\n\n"
-    for admin_id, admin_data in sorted(ADMINS.items(), key=lambda x: int(x[1].get('level', 0)), reverse=True):
-        level = admin_data.get('level', 0)
-        try:
-            level = int(level)
-        except:
-            level = 0
-            
-        if level == OWNER_LEVEL:
-            admin_list += f"👑 **{admin_data['name']}** (Владелец, ур. {level}) - `{admin_id}`\n"
-        elif level >= 10:
-            admin_list += f"🔰 **{admin_data['name']}** (Ст. админ, ур. {level}) - `{admin_id}`\n"
-        else:
-            admin_list += f"• {admin_data['name']} (ур. {level}) - `{admin_id}`\n"
-    
-    await callback.message.edit_text(
-        admin_list,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]]
-        ),
-        parse_mode="Markdown"
-    )
-    await callback.answer()
-
-# ============== ОБРАБОТЧИК СТАТИСТИКИ ==============
-@dp.callback_query(F.data == "admin_stats")
-async def show_admin_stats(callback: CallbackQuery):
-    """Показывает статистику для админов"""
-    user_level = get_admin_level(callback.from_user.id)
-    
-    if user_level == 0:
-        await callback.answer("❌ У вас нет доступа!", show_alert=True)
-        return
-    
-    today_count = 0
-    for appeal in user_appeals.values():
-        if 'date' in appeal:
-            try:
-                appeal_date = datetime.strptime(appeal['date'].split()[0], '%Y-%m-%d')
-                if (datetime.now() - appeal_date).days == 0:
-                    today_count += 1
-            except:
-                pass
-    
-    stats = f"""
-📊 **Статистика бота:**
-
-👥 **Пользователи:**
-• Всего обращений: {len(user_appeals)}
-
-👨‍💼 **Администраторы:**
-• Всего админов: {len(ADMINS)}
-• Владелец (ур. 1000): 1
-• Старшие админы (ур. 10+): {len([a for a in ADMINS.values() if int(a.get('level', 0)) >= 10 and int(a.get('level', 0)) < OWNER_LEVEL])}
-• Обычные админы: {len([a for a in ADMINS.values() if int(a.get('level', 0)) < 10])}
-
-📝 **За сегодня:**
-• Обращений: {today_count}
-    """
-    
-    await callback.message.edit_text(
-        stats,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]]
-        ),
-        parse_mode="Markdown"
-    )
-    await callback.answer()
 
 # ============== КОМАНДА /HELP ==============
 @dp.message(Command("help"))
