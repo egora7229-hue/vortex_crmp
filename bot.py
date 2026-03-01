@@ -34,7 +34,7 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 # Файлы для хранения данных
-ADMINS_FILE = "admins.json"
+ADMINS_FILE = "admin.json"  # ИСПРАВЛЕНО: было admins.json, стало admin.json
 APPLICATIONS_FILE = "applications.json"
 INVENTORY_FILE = "inventory.json"
 DAILY_BONUS_FILE = "daily_bonus.json"
@@ -46,6 +46,7 @@ def load_admins():
         try:
             with open(ADMINS_FILE, 'r', encoding='utf-8') as f:
                 admins = json.load(f)
+                # Преобразуем уровни в числа
                 for admin_id, admin_data in admins.items():
                     if 'level' in admin_data:
                         try:
@@ -53,19 +54,27 @@ def load_admins():
                         except (ValueError, TypeError):
                             admin_data['level'] = 1
                 return admins
-        except:
+        except Exception as e:
+            print(f"Ошибка загрузки admin.json: {e}")
             return {str(OWNER_ID): {
                 "name": "Главный администратор", 
                 "level": OWNER_LEVEL, 
                 "added_by": "system",
                 "date": datetime.now().strftime("%Y-%m-%d %H:%M")
             }}
-    return {str(OWNER_ID): {
+    
+    # Если файла нет - создаем с тобой как админом
+    print("Файл admin.json не найден, создаю новый...")
+    default_admins = {str(OWNER_ID): {
         "name": "Главный администратор", 
         "level": OWNER_LEVEL, 
         "added_by": "system",
         "date": datetime.now().strftime("%Y-%m-%d %H:%M")
     }}
+    
+    # Сразу сохраняем файл
+    save_admins(default_admins)
+    return default_admins
 
 def save_admins(admins):
     """Сохраняет список админов в файл"""
@@ -77,6 +86,7 @@ def save_admins(admins):
     
     with open(ADMINS_FILE, 'w', encoding='utf-8') as f:
         json.dump(admins_to_save, f, indent=4, ensure_ascii=False)
+    print(f"✅ Администраторы сохранены в {ADMINS_FILE}")
 
 def load_applications():
     """Загружает заявки в админы"""
@@ -128,6 +138,10 @@ ADMINS = load_admins()
 APPLICATIONS = load_applications()
 INVENTORY = load_inventory()
 DAILY_BONUS_DATA = load_daily_bonus()
+
+print(f"✅ Загружено администраторов: {len(ADMINS)}")
+for admin_id, admin_data in ADMINS.items():
+    print(f"   - {admin_data['name']} (ID: {admin_id}, уровень: {admin_data['level']})")
 
 # Хранилище для связи пользователей и их обращений
 user_appeals = {}
@@ -678,8 +692,7 @@ async def process_admin_apply_reason(message: types.Message, state: FSMContext):
     
     await message.answer(
         "✅ **Заявка отправлена!**\n\n"
-        "Администрация рассмотрит вашу заявку в ближайшее время.\n"
-        "Статус заявки можно узнать в админ-панели (для админов).",
+        "Администрация рассмотрит вашу заявку в ближайшее время.",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]]
         )
@@ -880,9 +893,8 @@ async def process_accept_application(message: types.Message, state: FSMContext):
             f"✅ **Ваша заявка на администратора принята!**\n\n{accept_text}",
             parse_mode="Markdown"
         )
-        logger.info(f"Уведомление отправлено пользователю {app['user_id']}")
-    except Exception as e:
-        logger.error(f"Не удалось отправить уведомление пользователю {app['user_id']}: {e}")
+    except:
+        logger.warning(f"Не удалось отправить уведомление пользователю {app['user_id']}")
     
     await message.answer(
         f"✅ **Заявка #{app_id} принята!**\n\nСообщение отправлено пользователю.",
@@ -916,13 +928,11 @@ async def reject_application(callback: CallbackQuery):
         await bot.send_message(
             app['user_id'],
             "❌ **Ваша заявка на администратора отклонена.**\n\n"
-            "Вы можете подать новую заявку через 7 дней.\n"
-            "Спасибо за интерес к нашему проекту!",
+            "Вы можете подать новую заявку через 7 дней.",
             parse_mode="Markdown"
         )
-        logger.info(f"Уведомление об отклонении отправлено пользователю {app['user_id']}")
-    except Exception as e:
-        logger.error(f"Не удалось отправить уведомление пользователю {app['user_id']}: {e}")
+    except:
+        pass
     
     await callback.message.edit_text(
         f"❌ **Заявка #{app_id} отклонена**",
