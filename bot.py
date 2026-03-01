@@ -34,7 +34,7 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 # Файлы для хранения данных
-ADMINS_FILE = "admin.json"  # ИСПРАВЛЕНО: было admins.json, стало admin.json
+ADMINS_FILE = "admin.json"
 APPLICATIONS_FILE = "applications.json"
 INVENTORY_FILE = "inventory.json"
 DAILY_BONUS_FILE = "daily_bonus.json"
@@ -46,7 +46,6 @@ def load_admins():
         try:
             with open(ADMINS_FILE, 'r', encoding='utf-8') as f:
                 admins = json.load(f)
-                # Преобразуем уровни в числа
                 for admin_id, admin_data in admins.items():
                     if 'level' in admin_data:
                         try:
@@ -63,7 +62,6 @@ def load_admins():
                 "date": datetime.now().strftime("%Y-%m-%d %H:%M")
             }}
     
-    # Если файла нет - создаем с тобой как админом
     print("Файл admin.json не найден, создаю новый...")
     default_admins = {str(OWNER_ID): {
         "name": "Главный администратор", 
@@ -72,7 +70,6 @@ def load_admins():
         "date": datetime.now().strftime("%Y-%m-%d %H:%M")
     }}
     
-    # Сразу сохраняем файл
     save_admins(default_admins)
     return default_admins
 
@@ -182,13 +179,6 @@ def get_level_text(level):
     else:
         return f"👨‍💼 **Администратор** (Уровень {level}) - базовый доступ"
 
-# ============== ТЕКСТЫ ПРАВИЛ ==============
-rules_text = {
-    "general": "📜 ОБЩИЕ ПРАВИЛА:\n\n1.1 Уважайте других игроков\n1.2 Запрещен читинг\n1.3 Запрещен гриферство\n1.4 Соблюдайте RP отыгровку",
-    "chat": "💬 ЧАТ ПРАВИЛА:\n\n2.1 Не флудить\n2.2 Не капсить (писать ЗАГЛАВНЫМИ)\n2.3 Не оскорблять участников",
-    "rp": "🎭 RP ПРАВИЛА:\n\n3.1 Обязательная отыгровка действий\n3.2 Запрещен DM (DeathMatch)\n3.3 Запрещен RK (RevengeKill)"
-}
-
 # ============== СОСТОЯНИЯ ДЛЯ ФОРМ ==============
 class SupportForm(StatesGroup):
     waiting_for_issue = State()
@@ -220,7 +210,7 @@ class AdminApplicationForm(StatesGroup):
 
 # ============== ГЛАВНОЕ МЕНЮ ==============
 def get_main_keyboard(user_id=None):
-    """Создает главную клавиатуру с кнопками как на картинке"""
+    """Создает главную клавиатуру без правил"""
     buttons = [
         [InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
         [InlineKeyboardButton(text="▶️ Начать играть", callback_data="start_play")],
@@ -248,16 +238,6 @@ def get_main_keyboard(user_id=None):
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-# ============== МЕНЮ ПРАВИЛ ==============
-def get_rules_keyboard():
-    buttons = [
-        [InlineKeyboardButton(text="📜 Общие", callback_data="rules_general")],
-        [InlineKeyboardButton(text="💬 Чат", callback_data="rules_chat")],
-        [InlineKeyboardButton(text="🎭 RP", callback_data="rules_rp")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
 # ============== МЕНЮ ЗАЯВОК НА АДМИНА ==============
 def get_admin_applications_keyboard():
     """Клавиатура для просмотра заявок на админа"""
@@ -279,7 +259,7 @@ def get_application_action_keyboard(app_id):
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ============== ИСПРАВЛЕННАЯ АДМИН-ПАНЕЛЬ ==============
+# ============== АДМИН-ПАНЕЛЬ ==============
 def get_admin_keyboard(user_level):
     """Создает клавиатуру админ-панели в зависимости от уровня"""
     buttons = []
@@ -423,14 +403,12 @@ async def show_stats(callback: CallbackQuery):
     )
     await callback.answer()
 
-# ============== ИСПРАВЛЕННЫЙ ОБРАБОТЧИК "НАЧАТЬ ИГРАТЬ" ==============
+# ============== ИСПРАВЛЕННЫЙ ОБРАБОТЧИК "НАЧАТЬ ИГРАТЬ" (БЕЗ IP) ==============
 @dp.callback_query(F.data == "start_play")
 async def start_play(callback: CallbackQuery):
-    """Начать играть - без кнопки скачать, с новой ссылкой"""
+    """Начать играть - без IP, только кнопка"""
     await callback.message.edit_text(
         "▶️ **Начать играть**\n\n"
-        "Сервер: **VORTEX CRMP**\n"
-        "IP: **play.vortexrp.online**\n\n"
         "Присоединяйся к нам!",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
@@ -592,11 +570,10 @@ async def show_inventory(callback: CallbackQuery):
     )
     await callback.answer()
 
-# ============== ИСПРАВЛЕННЫЙ ОБРАБОТЧИК ЗАЯВОК НА АДМИНА ==============
+# ============== ОБРАБОТЧИК ЗАЯВОК НА АДМИНА ==============
 @dp.callback_query(F.data == "apply_admin")
 async def apply_admin_start(callback: CallbackQuery, state: FSMContext):
     """Начать заявку на админа"""
-    # Проверяем, не подавал ли уже заявку
     for app_id, app in APPLICATIONS.items():
         if app.get('user_id') == callback.from_user.id and app.get('status') == 'pending':
             await callback.answer("❌ Вы уже подали заявку! Ожидайте рассмотрения.", show_alert=True)
@@ -651,7 +628,6 @@ async def process_admin_apply_reason(message: types.Message, state: FSMContext):
     """Завершает заявку на админа"""
     data = await state.get_data()
     
-    # Создаем заявку
     app_id = str(len(APPLICATIONS) + 1)
     APPLICATIONS[app_id] = {
         "id": app_id,
@@ -666,7 +642,6 @@ async def process_admin_apply_reason(message: types.Message, state: FSMContext):
     }
     save_applications(APPLICATIONS)
     
-    # Уведомляем админов с уровнем 10+
     notified = False
     for admin_id in ADMINS.keys():
         if get_admin_level(int(admin_id)) >= 10:
@@ -886,7 +861,6 @@ async def process_accept_application(message: types.Message, state: FSMContext):
     app['processed_date'] = datetime.now().strftime("%Y-%m-%d %H:%M")
     save_applications(APPLICATIONS)
     
-    # Отправляем уведомление пользователю
     try:
         await bot.send_message(
             app['user_id'],
@@ -923,7 +897,6 @@ async def reject_application(callback: CallbackQuery):
     app['processed_date'] = datetime.now().strftime("%Y-%m-%d %H:%M")
     save_applications(APPLICATIONS)
     
-    # Отправляем уведомление пользователю
     try:
         await bot.send_message(
             app['user_id'],
@@ -1242,7 +1215,6 @@ async def cmd_help(message: types.Message):
 Доступные команды:
 /start - Главное меню
 /help - Эта справка
-/rules - Правила сервера
 
 👨‍💼 **Для администраторов:**
 /admin - Админ-панель
@@ -1250,15 +1222,6 @@ async def cmd_help(message: types.Message):
 По всем вопросам используйте кнопку "Связь с админом"
     """
     await message.answer(help_text, parse_mode="Markdown")
-
-# ============== КОМАНДА /RULES ==============
-@dp.message(Command("rules"))
-async def cmd_rules(message: types.Message):
-    """Быстрый доступ к правилам"""
-    await message.answer(
-        "📚 Выберите раздел правил:",
-        reply_markup=get_rules_keyboard()
-    )
 
 # ============== ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ ==============
 @dp.message(F.text)
@@ -1292,9 +1255,7 @@ async def main():
     print("📝 Заявки на админов будут приходить админам с уровнем 10+")
     print("💬 Чтобы ответить пользователю - нажмите кнопку 'Ответить' под обращением")
     
-    # Удаляем вебхук перед запуском
     await delete_webhook()
-    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
