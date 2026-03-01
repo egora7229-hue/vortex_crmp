@@ -21,33 +21,26 @@ OWNER_LEVEL = 1000
 MSK_TZ = pytz.timezone('Europe/Moscow')
 
 def get_msk_time():
-    """Возвращает текущее время в МСК"""
     return datetime.now(MSK_TZ)
 
 def get_msk_date():
-    """Возвращает текущую дату в МСК"""
     return get_msk_time().strftime("%Y-%m-%d")
 
 def get_msk_weekday():
-    """Возвращает номер дня недели в МСК (1-7, где 1 - понедельник)"""
     weekday = get_msk_time().weekday() + 1
     return weekday
 
 # ==================== ФУНКЦИИ ДЛЯ УСТРАНЕНИЯ КОНФЛИКТОВ ====================
 async def force_stop_all_instances():
-    """Принудительно останавливает все другие экземпляры бота"""
     try:
         temp_bot = Bot(token=BOT_TOKEN)
-        # Удаляем вебхук и сбрасываем все ожидающие обновления
         await temp_bot.delete_webhook(drop_pending_updates=True)
         await temp_bot.session.close()
         print("✅ Все конфликтующие экземпляры бота остановлены")
     except Exception as e:
         print(f"⚠️ Ошибка при остановке конфликтов: {e}")
 
-# ==================== ФУНКЦИЯ УДАЛЕНИЯ ВЕБХУКА ====================
 async def delete_webhook():
-    """Удаляет вебхук перед запуском polling"""
     try:
         temp_bot = Bot(token=BOT_TOKEN)
         await temp_bot.delete_webhook(drop_pending_updates=True)
@@ -73,9 +66,8 @@ DAILY_BONUS_FILE = "daily_bonus.json"
 USERS_FILE = "users.json"
 WITHDRAW_FILE = "withdraw_requests.json"
 
-# ============== ПОЛНЫЙ СПИСОК МАШИН ИЗ RADMIR ==============
+# ============== СПИСОК МАШИН ==============
 CARS = [
-    # ID: 15065-15299 (первые 50 машин для примера, в реальном коде все 365)
     {"id": 15065, "name": "Toyota Chaser", "rarity": "rare"},
     {"id": 15066, "name": "Volkswagen Touareg", "rarity": "common"},
     {"id": 15067, "name": "BMW E38 740", "rarity": "common"},
@@ -116,7 +108,7 @@ CARS = [
     {"id": 15102, "name": "MAN TGS", "rarity": "uncommon"},
     {"id": 15103, "name": "ЗИЛ 131", "rarity": "common"},
     {"id": 15104, "name": "Tesla Cybertruck", "rarity": "epic"},
-    # ... здесь остальные машины (для полного кода нужно добавить все)
+    # ... здесь остальные машины (для краткости сократил)
 ]
 
 # ============== ЗАГРУЗКА ДАННЫХ ==============
@@ -371,8 +363,9 @@ def claim_daily_reward(user_id):
     
     user_data = DAILY_BONUS_DATA[user_id_str]
     
+    # ✅ ПРОВЕРКА: получал ли уже сегодня
     if user_data.get("last_claim_date") == today:
-        return {"success": False, "message": "Вы уже получили награду сегодня!"}
+        return {"success": False, "message": "❌ Вы уже получили награду сегодня!\nЗаходите завтра!"}
     
     reward = get_daily_reward_with_chance()
     
@@ -381,6 +374,7 @@ def claim_daily_reward(user_id):
     else:
         add_car_to_inventory(user_id, reward["car"])
     
+    # ✅ Обновляем данные
     user_data["last_claim_date"] = today
     if today_weekday not in user_data.get("claimed_days", []):
         if "claimed_days" not in user_data:
@@ -389,6 +383,7 @@ def claim_daily_reward(user_id):
     
     user_data["total_claimed"] = user_data.get("total_claimed", 0) + 1
     
+    # ✅ Обновляем streak
     yesterday = (datetime.now(MSK_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
     if user_data.get("last_claim_date") == yesterday:
         user_data["streak"] = user_data.get("streak", 0) + 1
@@ -433,26 +428,10 @@ WEEKDAYS = {
 class RegistrationForm(StatesGroup):
     waiting_for_nickname = State()
 
-class WithdrawForm(StatesGroup):
-    choosing_item = State()
-    confirming = State()
-
-class AdminApplyForm(StatesGroup):
-    waiting_for_age = State()
-    waiting_for_experience = State()
-    waiting_for_reason = State()
-
 class AddAdminForm(StatesGroup):
     waiting_for_id = State()
     waiting_for_name = State()
     waiting_for_level = State()
-
-class AdminApplicationForm(StatesGroup):
-    waiting_for_accept_text = State()
-
-class AdminWithdrawForm(StatesGroup):
-    waiting_for_request_id = State()
-    waiting_for_reply = State()
 
 # ============== КЛАВИАТУРЫ ==============
 def get_main_keyboard(user_id=None):
@@ -464,7 +443,6 @@ def get_main_keyboard(user_id=None):
         [InlineKeyboardButton(text="🎁 Получение бонусов", callback_data="bonuses")],
         [InlineKeyboardButton(text="🏆 Ежедневные награды", callback_data="daily_rewards")],
         [InlineKeyboardButton(text="📦 Хранилище", callback_data="inventory")],
-        [InlineKeyboardButton(text="📝 Подать заявку на админа", callback_data="apply_admin")],
     ]
     
     if user_id and is_admin(user_id):
@@ -482,22 +460,45 @@ def get_main_keyboard(user_id=None):
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-def get_inventory_keyboard(user_id):
+def get_inventory_keyboard(user_id, pending_requests):
     inv = get_user_inventory(user_id)
     buttons = []
     
-    if inv['money'] > 0:
-        buttons.append([InlineKeyboardButton(text=f"💰 Вывести {inv['money']} руб.", callback_data="withdraw_money")])
+    # ✅ Проверяем, есть ли уже заявка на вывод рублей
+    has_pending_money = any(
+        req['item_type'] == 'money' and req['status'] == 'pending' 
+        for req in pending_requests
+    )
     
+    if inv['money'] > 0 and not has_pending_money:
+        buttons.append([InlineKeyboardButton(text=f"💰 Вывести {inv['money']} руб.", callback_data="withdraw_money")])
+    elif inv['money'] > 0 and has_pending_money:
+        buttons.append([InlineKeyboardButton(text=f"⏳ Заявка на {inv['money']} руб. уже в обработке", callback_data="noop")])
+    
+    # ✅ Проверяем для каждой машины, есть ли уже заявка
     for i, car in enumerate(inv['cars']):
+        has_pending_car = any(
+            req['item_type'] == 'car' and 
+            req['item_index'] == i and 
+            req['status'] == 'pending'
+            for req in pending_requests
+        )
+        
         rarity_emoji = {
             "common": "⚪", "uncommon": "🟢", "rare": "🔵",
             "epic": "🟣", "legendary": "🟠"
         }.get(car['rarity'], "⚪")
-        buttons.append([InlineKeyboardButton(
-            text=f"{rarity_emoji} Вывести: {car['name']}", 
-            callback_data=f"withdraw_car_{i}"
-        )])
+        
+        if not has_pending_car:
+            buttons.append([InlineKeyboardButton(
+                text=f"{rarity_emoji} Вывести: {car['name']}", 
+                callback_data=f"withdraw_car_{i}"
+            )])
+        else:
+            buttons.append([InlineKeyboardButton(
+                text=f"⏳ {car['name']} (заявка в обработке)", 
+                callback_data="noop"
+            )])
     
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -505,7 +506,6 @@ def get_inventory_keyboard(user_id):
 def get_admin_keyboard(user_level):
     buttons = [
         [InlineKeyboardButton(text="👥 Список админов", callback_data="admin_list")],
-        [InlineKeyboardButton(text="📝 Заявки в админы", callback_data="admin_applications")],
         [InlineKeyboardButton(text="📋 Заявки на вывод", callback_data="admin_withdraw_requests")],
     ]
     
@@ -571,6 +571,12 @@ async def back_to_main(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 # ============== РЕГИСТРАЦИЯ ==============
+def is_registered(user_id):
+    return str(user_id) in USERS
+
+def get_user_nickname(user_id):
+    return USERS.get(str(user_id), {}).get('nickname')
+
 @dp.callback_query(F.data == "register")
 async def register_start(callback: CallbackQuery, state: FSMContext):
     if is_registered(callback.from_user.id):
@@ -605,6 +611,7 @@ async def register_nickname(message: types.Message, state: FSMContext):
         await message.answer("❌ Никнейм должен быть от 3 до 20 символов. Попробуйте еще раз:")
         return
     
+    # ✅ Проверяем уникальность ника
     for uid, user_data in USERS.items():
         if user_data.get('nickname', '').lower() == nickname.lower():
             await message.answer("❌ Этот никнейм уже занят. Введите другой:")
@@ -628,13 +635,14 @@ async def register_nickname(message: types.Message, state: FSMContext):
     )
     await state.clear()
 
-def is_registered(user_id):
-    return str(user_id) in USERS
-
-def get_user_nickname(user_id):
-    return USERS.get(str(user_id), {}).get('nickname')
-
 # ============== ХРАНИЛИЩЕ И ВЫВОД ==============
+def get_user_pending_requests(user_id):
+    """Возвращает список ожидающих заявок пользователя"""
+    return [
+        req for req in WITHDRAW_REQUESTS.values() 
+        if req['user_id'] == user_id and req['status'] == 'pending'
+    ]
+
 @dp.callback_query(F.data == "inventory")
 async def show_inventory(callback: CallbackQuery):
     if not is_registered(callback.from_user.id):
@@ -649,12 +657,20 @@ async def show_inventory(callback: CallbackQuery):
     
     text, inv = format_inventory_text(callback.from_user.id)
     
-    if inv['cars'] or inv['money'] > 0:
-        text += "\n\n👇 Нажмите на предмет, чтобы подать заявку на вывод в игру"
+    # ✅ Получаем ожидающие заявки
+    pending_requests = get_user_pending_requests(callback.from_user.id)
+    
+    if pending_requests:
+        text += "\n\n⏳ **У вас есть заявки в обработке:**\n"
+        for req in pending_requests:
+            if req['item_type'] == 'money':
+                text += f"• 💰 {req['item_data']} руб.\n"
+            else:
+                text += f"• 🚗 {req['item_data']['name']}\n"
     
     await callback.message.edit_text(
         text,
-        reply_markup=get_inventory_keyboard(callback.from_user.id),
+        reply_markup=get_inventory_keyboard(callback.from_user.id, pending_requests),
         parse_mode="Markdown"
     )
     await callback.answer()
@@ -685,6 +701,14 @@ async def withdraw_money(callback: CallbackQuery):
         await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
         return
     
+    # ✅ Проверяем, нет ли уже заявки на рубли
+    pending_requests = get_user_pending_requests(callback.from_user.id)
+    has_pending_money = any(req['item_type'] == 'money' for req in pending_requests)
+    
+    if has_pending_money:
+        await callback.answer("❌ У вас уже есть заявка на вывод рублей в обработке!", show_alert=True)
+        return
+    
     inv = get_user_inventory(callback.from_user.id)
     amount = inv['money']
     nickname = get_user_nickname(callback.from_user.id)
@@ -700,6 +724,7 @@ async def withdraw_money(callback: CallbackQuery):
         None
     )
     
+    # Уведомляем админов
     for admin_id in ADMINS.keys():
         if get_admin_level(int(admin_id)) >= 1:
             try:
@@ -721,7 +746,8 @@ async def withdraw_money(callback: CallbackQuery):
         f"💰 Сумма: {amount} руб.\n"
         f"🎮 Ваш ник: {nickname}\n\n"
         f"Администратор рассмотрит заявку и выдаст вам предметы в игре.\n"
-        f"Вы получите уведомление, когда заявка будет обработана.",
+        f"Вы получите уведомление, когда заявка будет обработана.\n\n"
+        f"⚠️ Повторная заявка на этот предмет станет доступна после обработки текущей.",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="🔙 В хранилище", callback_data="inventory")]]
         ),
@@ -736,6 +762,18 @@ async def withdraw_car(callback: CallbackQuery):
         return
     
     car_index = int(callback.data.split("_")[2])
+    
+    # ✅ Проверяем, нет ли уже заявки на эту машину
+    pending_requests = get_user_pending_requests(callback.from_user.id)
+    has_pending_car = any(
+        req['item_type'] == 'car' and req['item_index'] == car_index 
+        for req in pending_requests
+    )
+    
+    if has_pending_car:
+        await callback.answer("❌ На эту машину уже есть заявка в обработке!", show_alert=True)
+        return
+    
     inv = get_user_inventory(callback.from_user.id)
     nickname = get_user_nickname(callback.from_user.id)
     
@@ -752,6 +790,7 @@ async def withdraw_car(callback: CallbackQuery):
         car_index
     )
     
+    # Уведомляем админов
     for admin_id in ADMINS.keys():
         if get_admin_level(int(admin_id)) >= 1:
             try:
@@ -773,13 +812,19 @@ async def withdraw_car(callback: CallbackQuery):
         f"🚘 Машина: {car['name']} (ID: {car['id']})\n"
         f"🎮 Ваш ник: {nickname}\n\n"
         f"Администратор рассмотрит заявку и выдаст вам предметы в игре.\n"
-        f"Вы получите уведомление, когда заявка будет обработана.",
+        f"Вы получите уведомление, когда заявка будет обработана.\n\n"
+        f"⚠️ Повторная заявка на этот предмет станет доступна после обработки текущей.",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="🔙 В хранилище", callback_data="inventory")]]
         ),
         parse_mode="Markdown"
     )
     await callback.answer()
+
+@dp.callback_query(F.data == "noop")
+async def noop(callback: CallbackQuery):
+    """Заглушка для неактивных кнопок"""
+    await callback.answer("⏳ Эта заявка уже в обработке", show_alert=True)
 
 # ============== АДМИН-ПАНЕЛЬ: ЗАЯВКИ НА ВЫВОД ==============
 @dp.callback_query(F.data == "admin_withdraw_requests")
@@ -942,7 +987,7 @@ async def reject_withdraw(callback: CallbackQuery):
     )
     await callback.answer()
 
-# ============== ОСТАЛЬНЫЕ ОБРАБОТЧИКИ (сокращенно) ==============
+# ============== ОСТАЛЬНЫЕ ОБРАБОТЧИКИ ==============
 @dp.callback_query(F.data == "stats")
 async def show_stats(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -1113,28 +1158,6 @@ async def claim_daily(callback: CallbackQuery):
     )
     await callback.answer()
 
-# ============== ЗАЯВКИ НА АДМИНА (сокращенно) ==============
-@dp.callback_query(F.data == "apply_admin")
-async def apply_admin_start(callback: CallbackQuery, state: FSMContext):
-    for app_id, app in APPLICATIONS.items():
-        if app.get('user_id') == callback.from_user.id and app.get('status') == 'pending':
-            await callback.answer("❌ Вы уже подали заявку! Ожидайте рассмотрения.", show_alert=True)
-            return
-    
-    await callback.message.edit_text(
-        "📝 **Заявка на администратора**\n\n"
-        "Шаг 1 из 3\n\n"
-        "Введите ваш возраст:",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🔙 Отмена", callback_data="back_to_main")]]
-        ),
-        parse_mode="Markdown"
-    )
-    await state.set_state(AdminApplyForm.waiting_for_age)
-    await callback.answer()
-
-# ... (остальные шаги заявки на админа)
-
 # ============== АДМИН-ПАНЕЛЬ ==============
 @dp.callback_query(F.data == "admin_panel")
 async def admin_panel(callback: CallbackQuery):
@@ -1204,6 +1227,65 @@ async def admin_add_start(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(AddAdminForm.waiting_for_id)
     await callback.answer()
+
+@dp.message(AddAdminForm.waiting_for_id)
+async def process_add_admin_id(message: types.Message, state: FSMContext):
+    try:
+        new_id = int(message.text.strip())
+        if str(new_id) in ADMINS:
+            await message.answer("❌ Уже администратор!")
+            await state.clear()
+            return
+        
+        await state.update_data(new_admin_id=new_id)
+        await message.answer("✏️ Введите имя:")
+        await state.set_state(AddAdminForm.waiting_for_name)
+    except:
+        await message.answer("❌ Введите корректный ID (только цифры)!")
+
+@dp.message(AddAdminForm.waiting_for_name)
+async def process_add_admin_name(message: types.Message, state: FSMContext):
+    await state.update_data(admin_name=message.text.strip())
+    user_level = get_admin_level(message.from_user.id)
+    max_level = user_level - 1
+    await message.answer(f"📊 Введите уровень (1-{max_level}):")
+    await state.set_state(AddAdminForm.waiting_for_level)
+
+@dp.message(AddAdminForm.waiting_for_level)
+async def process_add_admin_level(message: types.Message, state: FSMContext):
+    try:
+        level = int(message.text.strip())
+        user_level = get_admin_level(message.from_user.id)
+        
+        if level < 1 or level >= user_level:
+            await message.answer(f"❌ Уровень должен быть от 1 до {user_level-1}!")
+            return
+        
+        data = await state.get_data()
+        new_id = data['new_admin_id']
+        name = data['admin_name']
+        
+        ADMINS[str(new_id)] = {
+            "name": name,
+            "level": level,
+            "added_by": message.from_user.full_name,
+            "date": get_msk_time().strftime("%Y-%m-%d %H:%M")
+        }
+        
+        save_admins(ADMINS)
+        
+        try:
+            await bot.send_message(
+                new_id,
+                f"✅ Вы стали администратором!\nУровень: {level}"
+            )
+        except:
+            pass
+        
+        await message.answer(f"✅ Администратор {name} добавлен с уровнем {level}!")
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ Введите число!")
 
 # ============== ЗАПУСК ==============
 async def main():
