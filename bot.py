@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 import pytz
 
 # ==================== ТВОИ ДАННЫЕ ====================
-BOT_TOKEN = "8640012758:AAFhVeVAleSvtg36-dFbaYxUY5Zl8o-9_ck"
+BOT_TOKEN = "8640012758:AAEOxLmnjJOZv8U8FZrmtXVrRc_TXu8QtZo"
 OWNER_ID = 7470989833
 OWNER_LEVEL = 1000
 
