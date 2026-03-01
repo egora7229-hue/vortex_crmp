@@ -409,14 +409,18 @@ async def show_stats(callback: CallbackQuery):
     )
     await callback.answer()
 
+# ============== ИСПРАВЛЕННЫЙ ОБРАБОТЧИК "НАЧАТЬ ИГРАТЬ" ==============
 @dp.callback_query(F.data == "start_play")
 async def start_play(callback: CallbackQuery):
-    """Начать играть"""
+    """Начать играть - без кнопки скачать, с новой ссылкой"""
     await callback.message.edit_text(
-        "▶️ **Начать играть**\n\nСервер: **VORTEX CRMP**\nIP: **play.vortexrp.online**\n\nПрисоединяйся к нам!",
+        "▶️ **Начать играть**\n\n"
+        "Сервер: **VORTEX CRMP**\n"
+        "IP: **play.vortexrp.online**\n\n"
+        "Присоединяйся к нам!",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="📥 Скачать лаунчер", url="https://vortexrp.online/download")],
+                [InlineKeyboardButton(text="📱 Перейти к посту", url="https://t.me/vortex_gta/132")],
                 [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
             ]
         ),
@@ -574,9 +578,11 @@ async def show_inventory(callback: CallbackQuery):
     )
     await callback.answer()
 
+# ============== ИСПРАВЛЕННЫЙ ОБРАБОТЧИК ЗАЯВОК НА АДМИНА ==============
 @dp.callback_query(F.data == "apply_admin")
 async def apply_admin_start(callback: CallbackQuery, state: FSMContext):
     """Начать заявку на админа"""
+    # Проверяем, не подавал ли уже заявку
     for app_id, app in APPLICATIONS.items():
         if app.get('user_id') == callback.from_user.id and app.get('status') == 'pending':
             await callback.answer("❌ Вы уже подали заявку! Ожидайте рассмотрения.", show_alert=True)
@@ -631,6 +637,7 @@ async def process_admin_apply_reason(message: types.Message, state: FSMContext):
     """Завершает заявку на админа"""
     data = await state.get_data()
     
+    # Создаем заявку
     app_id = str(len(APPLICATIONS) + 1)
     APPLICATIONS[app_id] = {
         "id": app_id,
@@ -645,6 +652,8 @@ async def process_admin_apply_reason(message: types.Message, state: FSMContext):
     }
     save_applications(APPLICATIONS)
     
+    # Уведомляем админов с уровнем 10+
+    notified = False
     for admin_id in ADMINS.keys():
         if get_admin_level(int(admin_id)) >= 10:
             try:
@@ -653,16 +662,24 @@ async def process_admin_apply_reason(message: types.Message, state: FSMContext):
                     f"📝 **Новая заявка в админы #{app_id}**\n\n"
                     f"👤 От: {message.from_user.full_name}\n"
                     f"🆔 ID: {message.from_user.id}\n"
-                    f"📅 Возраст: {data.get('age')}\n\n"
+                    f"📱 Username: @{message.from_user.username}\n"
+                    f"📅 Возраст: {data.get('age')}\n"
+                    f"📊 Опыт: {data.get('experience')}\n"
+                    f"💭 Причина: {message.text}\n\n"
                     f"Используйте админ-панель для просмотра",
                     parse_mode="Markdown"
                 )
-            except:
-                pass
+                notified = True
+            except Exception as e:
+                logger.error(f"Ошибка при уведомлении админа {admin_id}: {e}")
+    
+    if not notified:
+        logger.warning("Нет админов с уровнем 10+ для уведомления")
     
     await message.answer(
         "✅ **Заявка отправлена!**\n\n"
-        "Администрация рассмотрит вашу заявку в ближайшее время.",
+        "Администрация рассмотрит вашу заявку в ближайшее время.\n"
+        "Статус заявки можно узнать в админ-панели (для админов).",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_main")]]
         )
@@ -856,14 +873,16 @@ async def process_accept_application(message: types.Message, state: FSMContext):
     app['processed_date'] = datetime.now().strftime("%Y-%m-%d %H:%M")
     save_applications(APPLICATIONS)
     
+    # Отправляем уведомление пользователю
     try:
         await bot.send_message(
             app['user_id'],
             f"✅ **Ваша заявка на администратора принята!**\n\n{accept_text}",
             parse_mode="Markdown"
         )
-    except:
-        logger.warning(f"Не удалось отправить уведомление пользователю {app['user_id']}")
+        logger.info(f"Уведомление отправлено пользователю {app['user_id']}")
+    except Exception as e:
+        logger.error(f"Не удалось отправить уведомление пользователю {app['user_id']}: {e}")
     
     await message.answer(
         f"✅ **Заявка #{app_id} принята!**\n\nСообщение отправлено пользователю.",
@@ -892,15 +911,18 @@ async def reject_application(callback: CallbackQuery):
     app['processed_date'] = datetime.now().strftime("%Y-%m-%d %H:%M")
     save_applications(APPLICATIONS)
     
+    # Отправляем уведомление пользователю
     try:
         await bot.send_message(
             app['user_id'],
             "❌ **Ваша заявка на администратора отклонена.**\n\n"
-            "Вы можете подать новую заявку через 7 дней.",
+            "Вы можете подать новую заявку через 7 дней.\n"
+            "Спасибо за интерес к нашему проекту!",
             parse_mode="Markdown"
         )
-    except:
-        pass
+        logger.info(f"Уведомление об отклонении отправлено пользователю {app['user_id']}")
+    except Exception as e:
+        logger.error(f"Не удалось отправить уведомление пользователю {app['user_id']}: {e}")
     
     await callback.message.edit_text(
         f"❌ **Заявка #{app_id} отклонена**",
