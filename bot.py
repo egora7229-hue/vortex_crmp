@@ -11,27 +11,33 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from datetime import datetime, timedelta
 import random
 
-# ТОКЕН БОТА (получите у @BotFather)
+# ==================== ТВОИ ДАННЫЕ ====================
 BOT_TOKEN = "8640012758:AAFhVeVAleSvtg36-dFbaYxUY5Zl8o-9_ck"
-
-# ГЛАВНЫЙ АДМИНИСТРАТОР (ВЫ) - УРОВЕНЬ 1000
 OWNER_ID = 7470989833
-OWNER_LEVEL = 1000  # Максимальный уровень
+OWNER_LEVEL = 1000
+
+# ==================== ФУНКЦИЯ УДАЛЕНИЯ ВЕБХУКА ====================
+async def delete_webhook():
+    """Удаляет вебхук перед запуском polling"""
+    temp_bot = Bot(token=BOT_TOKEN)
+    await temp_bot.delete_webhook(drop_pending_updates=True)
+    await temp_bot.session.close()
+    print("✅ Вебхук удален")
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Инициализация бота
+bot = Bot(token=BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
 
 # Файлы для хранения данных
 ADMINS_FILE = "admins.json"
 APPLICATIONS_FILE = "applications.json"
 INVENTORY_FILE = "inventory.json"
 DAILY_BONUS_FILE = "daily_bonus.json"
-
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Инициализация бота и диспетчера
-bot = Bot(token=BOT_TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
 
 # ============== ЗАГРУЗКА/СОХРАНЕНИЕ ДАННЫХ ==============
 def load_admins():
@@ -40,7 +46,6 @@ def load_admins():
         try:
             with open(ADMINS_FILE, 'r', encoding='utf-8') as f:
                 admins = json.load(f)
-                # Преобразуем уровни в числа
                 for admin_id, admin_data in admins.items():
                     if 'level' in admin_data:
                         try:
@@ -64,11 +69,9 @@ def load_admins():
 
 def save_admins(admins):
     """Сохраняет список админов в файл"""
-    # Копируем, чтобы не изменять оригинал
     admins_to_save = {}
     for admin_id, admin_data in admins.items():
         admins_to_save[admin_id] = admin_data.copy()
-        # Преобразуем уровень в строку для JSON
         if 'level' in admins_to_save[admin_id]:
             admins_to_save[admin_id]['level'] = str(admins_to_save[admin_id]['level'])
     
@@ -135,7 +138,6 @@ def get_admin_level(user_id):
     """Возвращает уровень админа (0 если не админ)"""
     admin_data = ADMINS.get(str(user_id))
     if admin_data:
-        # Преобразуем уровень в число, если он сохранен как строка
         level = admin_data.get('level', 0)
         try:
             return int(level)
@@ -144,17 +146,16 @@ def get_admin_level(user_id):
     return 0
 
 def is_admin(user_id, min_level=1):
-    """Проверяет, является ли пользователь администратором с уровнем не ниже min_level"""
+    """Проверяет, является ли пользователь администратором"""
     level = get_admin_level(user_id)
     return level >= min_level
 
 def is_owner(user_id):
-    """Проверяет, является ли пользователь главным администратором (уровень 1000)"""
+    """Проверяет, является ли пользователь главным администратором"""
     return get_admin_level(user_id) == OWNER_LEVEL
 
 def get_level_text(level):
     """Возвращает текст с уровнем админа"""
-    # Преобразуем в число, если пришла строка
     try:
         level = int(level)
     except (ValueError, TypeError):
@@ -322,11 +323,9 @@ def get_daily_reward(user_id):
     user_data = DAILY_BONUS_DATA[user_id_str]
     last_claim = user_data.get("last_claim")
     
-    # Проверяем, можно ли получить награду
     if last_claim == today:
         return {"success": False, "message": "Вы уже получили награду сегодня!"}
     
-    # Обновляем streak
     if last_claim and (datetime.now() - datetime.strptime(last_claim, "%Y-%m-%d")).days == 1:
         user_data["streak"] += 1
     else:
@@ -335,7 +334,6 @@ def get_daily_reward(user_id):
     user_data["last_claim"] = today
     user_data["total_claimed"] += 1
     
-    # Генерируем награду
     rewards = [
         "🎫 Билет на розыгрыш",
         "💎 50 кристаллов",
@@ -575,7 +573,6 @@ async def show_inventory(callback: CallbackQuery):
 @dp.callback_query(F.data == "apply_admin")
 async def apply_admin_start(callback: CallbackQuery, state: FSMContext):
     """Начать заявку на админа"""
-    # Проверяем, не подавал ли уже заявку
     for app_id, app in APPLICATIONS.items():
         if app.get('user_id') == callback.from_user.id and app.get('status') == 'pending':
             await callback.answer("❌ Вы уже подали заявку! Ожидайте рассмотрения.", show_alert=True)
@@ -630,7 +627,6 @@ async def process_admin_apply_reason(message: types.Message, state: FSMContext):
     """Завершает заявку на админа"""
     data = await state.get_data()
     
-    # Создаем заявку
     app_id = str(len(APPLICATIONS) + 1)
     APPLICATIONS[app_id] = {
         "id": app_id,
@@ -645,9 +641,8 @@ async def process_admin_apply_reason(message: types.Message, state: FSMContext):
     }
     save_applications(APPLICATIONS)
     
-    # Уведомляем админов
     for admin_id in ADMINS.keys():
-        if get_admin_level(int(admin_id)) >= 10:  # Только админам с уровнем 10+
+        if get_admin_level(int(admin_id)) >= 10:
             try:
                 await bot.send_message(
                     int(admin_id),
@@ -714,7 +709,7 @@ async def admin_apps_list(callback: CallbackQuery):
     text = "📋 **Список заявок:**\n\n"
     buttons = []
     
-    for app in pending[:10]:  # Показываем последние 10
+    for app in pending[:10]:
         text += f"#{app['id']} - {app['user_name']} ({app['date']})\n"
         buttons.append([InlineKeyboardButton(
             text=f"📝 Заявка #{app['id']}", 
@@ -857,7 +852,6 @@ async def process_accept_application(message: types.Message, state: FSMContext):
     app['processed_date'] = datetime.now().strftime("%Y-%m-%d %H:%M")
     save_applications(APPLICATIONS)
     
-    # Отправляем уведомление пользователю
     try:
         await bot.send_message(
             app['user_id'],
@@ -894,7 +888,6 @@ async def reject_application(callback: CallbackQuery):
     app['processed_date'] = datetime.now().strftime("%Y-%m-%d %H:%M")
     save_applications(APPLICATIONS)
     
-    # Отправляем уведомление пользователю
     try:
         await bot.send_message(
             app['user_id'],
@@ -1005,8 +998,7 @@ async def process_add_admin_id(message: types.Message, state: FSMContext):
             return
         
         await state.update_data(new_admin_id=new_admin_id)
-        
-        max_level = user_level - 1  # Нельзя дать уровень выше или равный своему
+        max_level = user_level - 1
         
         await message.answer(
             f"✏️ **Введите имя/никнейм для нового администратора:**\n\n"
@@ -1041,7 +1033,6 @@ async def process_add_admin_name(message: types.Message, state: FSMContext):
     admin_name = message.text.strip()
     
     await state.update_data(admin_name=admin_name)
-    
     max_level = user_level - 1
     
     await message.answer(
@@ -1083,15 +1074,14 @@ async def process_add_admin_level(message: types.Message, state: FSMContext):
         new_admin_id = data.get('new_admin_id')
         admin_name = data.get('admin_name')
         
-        # Сохраняем уровень как число в памяти
         ADMINS[str(new_admin_id)] = {
             "name": admin_name,
-            "level": new_level,  # Здесь число
+            "level": new_level,
             "added_by": message.from_user.full_name,
             "date": datetime.now().strftime("%Y-%m-%d %H:%M")
         }
         
-        save_admins(ADMINS)  # При сохранении преобразуется в строку
+        save_admins(ADMINS)
         
         try:
             await bot.send_message(
@@ -1265,6 +1255,10 @@ async def main():
     print("   • 1-9 - Обычные админы (базовые права)")
     print("📝 Заявки на админов будут приходить админам с уровнем 10+")
     print("💬 Чтобы ответить пользователю - нажмите кнопку 'Ответить' под обращением")
+    
+    # Удаляем вебхук перед запуском
+    await delete_webhook()
+    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
